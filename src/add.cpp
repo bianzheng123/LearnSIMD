@@ -21,7 +21,6 @@ std::vector<float> generate_array(const uint32_t size) {
 
 std::vector<float> add_vector_simd(std::vector<float> arr1, std::vector<float> arr2, const uint32_t n_pack_num) {
     assert(arr1.size() == arr2.size());
-    printf("before init\n");
     const uint32_t size = arr1.size();
 
     std::vector<float> result(size);
@@ -43,9 +42,47 @@ std::vector<float> add_vector_simd(std::vector<float> arr1, std::vector<float> a
     return result;
 }
 
+std::vector<float> add_vector_simd_align(std::vector<float> arr1, std::vector<float> arr2, const uint32_t n_pack_num) {
+    assert(arr1.size() == arr2.size());
+    const uint32_t size = arr1.size();
+
+    const uint32_t pad_size = size + (size % n_pack_num == 0 ? 0 : n_pack_num - size % n_pack_num);
+    assert(pad_size > size && pad_size % n_pack_num == 0);
+    float *arr1_align = (float *) std::aligned_alloc(32, sizeof(float) * pad_size);
+    for (uint32_t i = 0; i < pad_size; i++) {
+        if (i < size) {
+            arr1_align[i] = arr1[i];
+        } else {
+            arr1_align[i] = 0;
+        }
+    }
+    float *arr2_align = (float *) std::aligned_alloc(32, sizeof(float) * pad_size);
+    for (uint32_t i = 0; i < pad_size; i++) {
+        if (i < size) {
+            arr2_align[i] = arr2[i];
+        } else {
+            arr2_align[i] = 0;
+        }
+    }
+    float *result_align = (float *) std::aligned_alloc(32, sizeof(float) * pad_size);
+
+    for (uint32_t i = 0; i < size; i += n_pack_num) {
+        __m256 reg_arra = _mm256_load_ps(arr1_align + i);
+        __m256 reg_arrb = _mm256_load_ps(arr2_align + i);
+
+        __m256 reg_arr = _mm256_add_ps(reg_arra, reg_arrb);
+
+        _mm256_store_ps(result_align + i, reg_arr);
+    }
+
+    std::vector<float> result(size);
+    result.assign(result_align, result_align + pad_size);
+
+    return result;
+}
+
 std::vector<float> add_vector_simple(std::vector<float> arr1, std::vector<float> arr2) {
     assert(arr1.size() == arr2.size());
-    printf("before init\n");
     const uint32_t size = arr1.size();
 
     std::vector<float> result(size);
@@ -62,6 +99,7 @@ int main(int argc, char *argv[]) {
     std::vector<float> arrb = generate_array(size);
 
     std::vector<float> arr_simd = add_vector_simd(arra, arrb, n_pack_num);
+    std::vector<float> arr_simd_align = add_vector_simd_align(arra, arrb, n_pack_num);
     std::vector<float> arr_simple = add_vector_simple(arra, arrb);
 
     for (uint32_t i = 0; i < size; i++) {
@@ -69,6 +107,12 @@ int main(int argc, char *argv[]) {
         if (arr_simd[i] != arr_simple[i]) {
             printf("arr_simd[%d] != arr_simple[%d], simd value %.3f, simple value %.3f\n",
                    i, i, arr_simd[i], arr_simple[i]);
+        }
+
+        assert(arr_simd_align[i] == arr_simple[i]);
+        if (arr_simd_align[i] != arr_simple[i]) {
+            printf("arr_simd_align[%d] != arr_simple[%d], simd value %.3f, simple value %.3f\n",
+                   i, i, arr_simd_align[i], arr_simple[i]);
         }
     }
 
